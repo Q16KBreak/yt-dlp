@@ -2352,6 +2352,11 @@ class BiliLiveIE(InfoExtractor):
         30000: {'format_id': 'dolby', 'format_note': '杜比'},
     }
 
+    _dynamic_range = {
+        0: 'SDR',
+        1: 'HDR10',
+    }
+
     _quality = staticmethod(qualities(list(_FORMATS)))
 
     def _call_api(self, path, room_id, query):
@@ -2360,17 +2365,36 @@ class BiliLiveIE(InfoExtractor):
             raise ExtractorError(api_result.get('message') or 'Unable to download JSON metadata')
         return api_result.get('data') or {}
 
-    def _parse_formats(self, qn, fmt):
+    def _parse_qn_desc(self, desc, qn, hdr_type):
+        for item in desc:
+            if item['qn'] == qn and item['hdr_type'] == hdr_type:
+                return item['desc']
+        return None
+
+    def _parse_formats(self, qn, fmt, desc):
         for codec in fmt.get('codec') or []:
             if codec.get('current_qn') != qn:
                 continue
+            hdr_type = codec.get('hdr_type')
+            # _format_id = self._search_regex(r'/live-bvc/(\d+)',codec["base_url"],'format_id')
+            _current_qn = codec.get('current_qn')
+            _format_note = self._parse_qn_desc(desc, _current_qn, hdr_type)
+            _ext = fmt.get('format_name')
+            _vcodec = codec.get('codec_name')
             for url_info in codec['url_info']:
+                hst = self._search_regex(r'https://([^&]+)', url_info['host'], 'hst')
+                cdn = self._search_regex(r'cdn=([^&]+)', url_info['extra'], 'cdn')
+                _format_id = f'{_current_qn}{"hdr" if hdr_type else ""}-{_ext}-{_vcodec}-{cdn}'
                 yield {
                     'url': f'{url_info["host"]}{codec["base_url"]}{url_info["extra"]}',
-                    'ext': fmt.get('format_name'),
-                    'vcodec': codec.get('codec_name'),
-                    'quality': self._quality(qn),
-                    **self._FORMATS[qn],
+                    'ext': _ext,
+                    'vcodec': _vcodec,
+                    'quality': self._quality(_current_qn),
+                    'dynamic_range': self._dynamic_range.get(hdr_type),
+                    # **self._FORMATS[qn],
+                    'format_id': _format_id,
+                    'format_note': f'{_format_note}, {hst}',
+                    # 'vbr': int(self._search_regex(r'origin_bitrate=(\d+)',url_info["extra"],'vbr'))/1000
                 }
 
     def _real_extract(self, url):
@@ -2383,16 +2407,20 @@ class BiliLiveIE(InfoExtractor):
         for qn in self._FORMATS:
             stream_data = self._call_api('xlive/web-room/v2/index/getRoomPlayInfo', room_id, {
                 'room_id': room_id,
-                'qn': qn,
-                'codec': '0,1',
-                'format': '0,2',
-                'mask': '0',
                 'no_playurl': '0',
+                'mask': '1',
+                'qn': qn,
                 'platform': 'web',
                 'protocol': '0,1',
+                'format': '0,1,2',
+                'codec': '0,1,2',
+                'dolby': '5',
+                'panorama': '1',
+                'hdr_type': '0,1',
             })
+            desc = traverse_obj(stream_data, ('playurl_info', 'playurl', 'g_qn_desc'))
             for fmt in traverse_obj(stream_data, ('playurl_info', 'playurl', 'stream', ..., 'format', ...)) or []:
-                formats.extend(self._parse_formats(qn, fmt))
+                formats.extend(self._parse_formats(qn, fmt, desc))
 
         return {
             'id': room_id,
