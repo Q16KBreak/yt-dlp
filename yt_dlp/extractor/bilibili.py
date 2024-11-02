@@ -2421,10 +2421,12 @@ class BiliLiveIE(InfoExtractor):
             desc = traverse_obj(stream_data, ('playurl_info', 'playurl', 'g_qn_desc'))
             for fmt in traverse_obj(stream_data, ('playurl_info', 'playurl', 'stream', ..., 'format', ...)) or []:
                 formats.extend(self._parse_formats(qn, fmt, desc))
+            _timestamp = self._search_regex(r'expires=(\d+)', traverse_obj(stream_data, ('playurl_info', 'playurl', 'stream', 1, 'format', 0, 'codec', 0, 'url_info', 0, 'extra')), 'timestamp')
 
+        formatted_time = time.strftime('%Y-%m-%d %H:%M', time.localtime(int(_timestamp)))
         return {
             'id': room_id,
-            'title': room_data.get('title'),
+            'title': f'{room_data.get('title')} {formatted_time}',
             'description': room_data.get('description'),
             'thumbnail': room_data.get('user_cover'),
             'timestamp': stream_data.get('live_time'),
